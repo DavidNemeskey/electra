@@ -192,6 +192,7 @@ def write_examples(job_id, args):
   start_time = time.time()
   for file_no, fname in enumerate(fnames):
     logging.info(f'processing file_no {file_no}, fname {fname}...')
+    example_writer.write_examples(os.path.join(args.corpus_dir, fname))
     if file_no > 0:
       elapsed = time.time() - start_time
       log("processed {:}/{:} files ({:.1f}%), ELAPSED: {:}s, ETA: {:}s, "
@@ -199,7 +200,6 @@ def write_examples(job_id, args):
               file_no, len(fnames), 100.0 * file_no / len(fnames), int(elapsed),
               int((len(fnames) - file_no) / (file_no / elapsed)),
               example_writer.n_written))
-    example_writer.write_examples(os.path.join(args.corpus_dir, fname))
   example_writer.finish()
   log("Done!")
   return example_writer.n_written
