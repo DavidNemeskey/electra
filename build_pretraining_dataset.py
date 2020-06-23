@@ -16,10 +16,15 @@
 """Writes out text data as tfrecords that ELECTRA can be pre-trained on."""
 
 import argparse
+from functools import partial
+import gzip
+import logging
 import multiprocessing
 import os
 import random
 import time
+
+from multiprocessing_logging import install_mp_handler
 import tensorflow.compat.v1 as tf
 
 from model import tokenization
@@ -45,12 +50,14 @@ class ExampleBuilder(object):
     """Adds a line of text to the current example being built."""
     line = line.strip().replace("\n", " ")
     if (not line) and self._current_length != 0:  # empty lines separate docs
+      logging.debug('Example: empty line.')
       return self._create_example()
     bert_tokens = self._tokenizer.tokenize(line)
     bert_tokids = self._tokenizer.convert_tokens_to_ids(bert_tokens)
     self._current_sentences.append(bert_tokids)
     self._current_length += len(bert_tokids)
     if self._current_length >= self._target_length:
+      logging.debug(f'Example: current length {self._current_length}.')
       return self._create_example()
     return None
 
@@ -131,12 +138,14 @@ class ExampleWriter(object):
         output_fname = os.path.join(
             output_dir, "pretrain_data.tfrecord-{:}-of-{:}".format(
                 i, num_out_files))
-        self._writers.append(tf.io.TFRecordWriter(output_fname))
+        # self._writers.append(tf.io.TFRecordWriter(output_fname))
+        self._writers.append(tf.io.TFRecordWriter(output_fname, 'ZLIB'))
     self.n_written = 0
 
   def write_examples(self, input_file):
     """Writes out examples from the provided input file."""
-    with tf.io.gfile.GFile(input_file) as f:
+    # with tf.io.gfile.GFile(input_file) as f:
+    with (gzip.open if input_file.endswith('.gz') else open)(input_file, 'rt') as f:
       for line in f:
         line = line.strip()
         if line or self._blanks_separate_docs:
@@ -158,10 +167,12 @@ class ExampleWriter(object):
 
 def write_examples(job_id, args):
   """A single process creating and writing out pre-processed examples."""
+  multiprocessing.current_process().name = f'Job {job_id}'
 
   def log(*args):
     msg = " ".join(map(str, args))
-    print("Job {}:".format(job_id), msg)
+    # logging.info("Job {}: {}".format(job_id, msg))
+    logging.info("{}".format(msg))
 
   log("Creating example writer")
   example_writer = ExampleWriter(
@@ -180,6 +191,7 @@ def write_examples(job_id, args):
   random.shuffle(fnames)
   start_time = time.time()
   for file_no, fname in enumerate(fnames):
+    logging.info(f'processing file_no {file_no}, fname {fname}...')
     if file_no > 0:
       elapsed = time.time() - start_time
       log("processed {:}/{:} files ({:.1f}%), ELAPSED: {:}s, ETA: {:}s, "
@@ -190,6 +202,7 @@ def write_examples(job_id, args):
     example_writer.write_examples(os.path.join(args.corpus_dir, fname))
   example_writer.finish()
   log("Done!")
+  return example_writer.n_written
 
 
 def main():
@@ -210,20 +223,41 @@ def main():
                       action='store_true', help="Lower case input text.")
   parser.add_argument("--no-lower-case", dest='do_lower_case',
                       action='store_false', help="Don't lower case input text.")
+  parser.add_argument('--log-level', '-L', type=str, default='info',
+                      choices=['debug', 'info', 'warning', 'error', 'critical'],
+                      help='the logging level.')
   parser.set_defaults(do_lower_case=True)
   args = parser.parse_args()
+
+  logging.basicConfig(
+    format='%(asctime)s - %(processName)s - %(levelname)s - %(message)s',
+    datefmt='%m/%d/%Y %H:%M:%S',
+    level=getattr(logging, args.log_level.upper()),
+  )
+  install_mp_handler()
+
+  os.nice(20)
+
+  logging.info(f'Args: {args}')
 
   utils.rmkdir(args.output_dir)
   if args.num_processes == 1:
     write_examples(0, args)
   else:
-    jobs = []
-    for i in range(args.num_processes):
-      job = multiprocessing.Process(target=write_examples, args=(i, args))
-      jobs.append(job)
-      job.start()
-    for job in jobs:
-      job.join()
+    fn = partial(write_examples, args=args)
+    with multiprocessing.Pool(args.num_processes) as pool:
+      n_written = sum(pool.imap_unordered(fn, range(args.num_processes)))
+      pool.close()
+      pool.join()
+
+    logging.info(f'Written {n_written} documents.')
+    # jobs = []
+    # for i in range(args.num_processes):
+    #   job = multiprocessing.Process(target=write_examples, args=(i, args))
+    #   jobs.append(job)
+    #   job.start()
+    # for job in jobs:
+    #   job.join()
 
 
 if __name__ == "__main__":
