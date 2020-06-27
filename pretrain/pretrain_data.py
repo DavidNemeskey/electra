@@ -20,6 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+from functools import partial
 
 import numpy as np
 import tensorflow.compat.v1 as tf
@@ -53,12 +54,13 @@ def get_input_fn(config: configure_pretraining.PretrainingConfig, is_training,
 
     # `cycle_length` is the number of parallel files that get read.
     cycle_length = min(num_cpu_threads, len(input_files))
+    tf_record_dataset = partial(tf.data.TFRecordDataset, compression_type='ZLIB')
 
     # `sloppy` mode means that the interleaving is not exact. This adds
     # even more randomness to the training pipeline.
     d = d.apply(
         tf.data.experimental.parallel_interleave(
-            tf.data.TFRecordDataset,
+            tf_record_dataset,
             sloppy=is_training,
             cycle_length=cycle_length))
     d = d.shuffle(buffer_size=100)

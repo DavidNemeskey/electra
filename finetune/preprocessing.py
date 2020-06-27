@@ -94,7 +94,7 @@ class Preprocessor(object):
   def serialize_examples(self, examples, is_training, output_file, batch_size):
     """Convert a set of `InputExample`s to a TFRecord file."""
     n_examples = 0
-    with tf.io.TFRecordWriter(output_file) as writer:
+    with tf.io.TFRecordWriter(output_file, 'ZLIB') as writer:
       for (ex_index, example) in enumerate(examples):
         if ex_index % 2000 == 0:
           utils.log("Writing example {:} of {:}".format(
@@ -148,7 +148,7 @@ class Preprocessor(object):
 
     def input_fn(params):
       """The actual input function."""
-      d = tf.data.TFRecordDataset(input_file)
+      d = tf.data.TFRecordDataset(input_file, compression_type='ZLIB')
       if is_training:
         d = d.repeat()
         d = d.shuffle(buffer_size=100)
